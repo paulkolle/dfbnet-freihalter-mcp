@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run tests
+        run: uv run pytest -q
+
+      - name: Compile Python files
+        run: uv run python -m py_compile dfbnet_freihalter_mcp/*.py scripts/dfbnet_login_probe.py
+
+      - name: Basic secret pattern check
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          skip = {'.git', '.venv', 'dfbnet_probe_out', 'dfbnet_probe_out_alt', 'dfbnet_browser_profile'}
+          needles = ["Bearer " + "eyJ", "access_token=" + "eyJ", "refresh_token=" + "eyJ", "id_token=" + "eyJ"]
+          hits = []
+          for path in Path('.').rglob('*'):
+              if any(part in skip for part in path.parts) or not path.is_file():
+                  continue
+              try:
+                  text = path.read_text(encoding='utf-8')
+              except Exception:
+                  continue
+              if any(needle in text for needle in needles):
+                  hits.append(str(path))
+          if hits:
+              print('Potential secrets found:')
+              print('\n'.join(hits))
+              raise SystemExit(1)
+          PY

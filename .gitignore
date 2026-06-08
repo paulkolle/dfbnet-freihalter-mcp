@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local DFBNet secrets/session state - never commit
+.env
+.env.*
+!.env.example
+*.env
+.dfbnet_env
+dfbnet_probe_out/
+dfbnet_probe_out_alt/
+dfbnet_browser_profile/
+**/token_state.json
+**/storage_state.json
+**/events.json
+**/api-events.json
+**/last-auth-summary.json
+**/login-debug.*
+
+# Local editor/system files
+.DS_Store
+.idea/
+.vscode/
