@@ -33,7 +33,7 @@ Dadurch bleiben DFBNet-Sessiondaten lokal auf deinem Rechner. Es wird kein Port 
 ### 1. Repository klonen
 
 ```bash
-git clone https://github.com/<owner>/dfbnet-freihalter-mcp.git
+git clone https://github.com/paulkolle/dfbnet-freihalter-mcp.git
 cd dfbnet-freihalter-mcp
 ```
 
