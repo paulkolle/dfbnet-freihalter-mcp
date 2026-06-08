@@ -112,15 +112,17 @@ class DfbnetClient:
 
     def dry_run_delete_exemption(self, exemption_id: str) -> dict[str, Any]:
         return {
-            "method": "DELETE",
-            "url": f"{self.config.api_base_url}/referee/{self.config.referee_id}/exemption/{exemption_id}",
+            "method": "POST",
+            "url": f"{self.config.api_base_url}/referee/{self.config.referee_id}/delete-exemption",
+            "payload": {"ids": [exemption_id]},
             "exemption_id": exemption_id,
         }
 
     async def delete_exemption(self, exemption_id: str, verify: bool = True) -> dict[str, Any]:
-        url = self.dry_run_delete_exemption(exemption_id)["url"]
+        url = f"{self.config.api_base_url}/referee/{self.config.referee_id}/delete-exemption"
+        payload = {"ids": [exemption_id]}
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.delete(url, headers=await self._headers())
+            resp = await client.post(url, headers=await self._headers(), json=payload)
         if resp.status_code != 204:
             raise RuntimeError(f"delete_exemption expected HTTP 204, got {resp.status_code}: {resp.text[:500]}")
         result: dict[str, Any] = {"deleted": True, "status_code": resp.status_code, "exemption_id": exemption_id}

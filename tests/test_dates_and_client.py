@@ -56,8 +56,7 @@ def test_dry_run_date_range_uses_single_post_url_and_payload():
 def test_delete_exemption_url_contains_referee_and_exemption_id():
     result = make_client().dry_run_delete_exemption("EXEMPTION123")
 
-    assert result == {
-        "method": "DELETE",
-        "url": "https://api.dfbnet.org/api/referee/referee/REF123/exemption/EXEMPTION123",
-        "exemption_id": "EXEMPTION123",
-    }
+    assert result["method"] == "POST"
+    assert result["url"] == "https://api.dfbnet.org/api/referee/referee/REF123/delete-exemption"
+    assert result["payload"] == {"ids": ["EXEMPTION123"]}
+    assert result["exemption_id"] == "EXEMPTION123"
