@@ -22,6 +22,21 @@ async def auth_status() -> dict[str, Any]:
 
 
 @mcp.tool()
+async def relogin() -> dict[str, Any]:
+    """Force a headless DFBNet auto-relogin via Playwright. Use when tokens have expired."""
+    from .auth import AuthError
+    client = _client()
+    try:
+        bundle = await client.tokens.auto_relogin()
+        summary = await client.auth_status()
+        return {"status": "ok", "message": "Auto-relogin succeeded, new tokens saved.", "auth": summary}
+    except AuthError as e:
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        return {"status": "error", "message": f"Unexpected error during relogin: {type(e).__name__}: {e}"}
+
+
+@mcp.tool()
 def dry_run_full_day_exemption(date: str, reason: str = "PREVENTED", comment: str | None = None) -> dict[str, Any]:
     """Build the DFBNet payload for a full-day Freihalter without sending it. date format: YYYY-MM-DD."""
     return _client().dry_run_full_day_exemption(date, reason=reason, comment=comment)

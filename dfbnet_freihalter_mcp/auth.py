@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from playwright.async_api import async_playwright
 
 from .config import DfbnetConfig
 
@@ -168,6 +170,122 @@ class TokenManager:
             return load_tokens_from_token_state(self.config.token_state_path)
         return load_tokens_from_storage_state(self.config.storage_state_path, self.config.origin)
 
+    async def auto_relogin(self) -> TokenBundle:
+        """Attempt a headless Playwright auto-login when token refresh fails."""
+        login_id = os.getenv("DFBNET_LOGIN_ID")
+        password = os.getenv("DFBNET_PASSWORD")
+        if not login_id or not password:
+            raise AuthError(
+                "Cannot auto-relogin: DFBNET_LOGIN_ID and DFBNET_PASSWORD not set. "
+                "Ensure they are defined in ~/.dfbnet_env."
+            )
+
+        async def _do_relogin() -> bool:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(headless=True)
+                try:
+                    context = await browser.new_context(
+                        viewport={"width": 1440, "height": 1000},
+                        locale="de-DE",
+                        timezone_id="Europe/Berlin",
+                    )
+                    page = await context.new_page()
+                    await page.goto(self.config.origin, wait_until="domcontentloaded")
+
+                    # Wait for redirect to Keycloak auth page
+                    for _ in range(30):
+                        if "auth.dfbnet.org" in page.url:
+                            break
+                        await page.wait_for_timeout(1000)
+
+                    # Fill login form — try multiple selectors
+                    async def _first_visible(selectors):
+                        for sel in selectors:
+                            try:
+                                loc = page.locator(sel).first
+                                if await loc.count() and await loc.is_visible(timeout=500):
+                                    return sel
+                            except Exception:
+                                continue
+                        return None
+
+                    username_sel = await _first_visible([
+                        "input#username", "input[name='username']",
+                        "input[type='text']", "input[autocomplete='username']",
+                    ])
+                    password_sel = await _first_visible([
+                        "input#password", "input[name='password']",
+                        "input[type='password']", "input[autocomplete='current-password']",
+                    ])
+
+                    if not username_sel or not password_sel:
+                        return False
+
+                    await page.fill(username_sel, login_id)
+                    await page.fill(password_sel, password)
+
+                    submit_sel = await _first_visible([
+                        "input#kc-login", "button#kc-login",
+                        "input[type='submit']", "button[type='submit']",
+                        "button:has-text('Anmelden')", "button:has-text('Einloggen')",
+                    ])
+                    if submit_sel:
+                        await page.click(submit_sel)
+                    else:
+                        await page.keyboard.press("Enter")
+
+                    # Wait for access_token in sessionStorage
+                    for _ in range(60):
+                        try:
+                            tok_ok = await page.evaluate(
+                                "() => !!sessionStorage.getItem('access_token')"
+                            )
+                        except Exception:
+                            tok_ok = False
+                        if tok_ok:
+                            break
+                        await page.wait_for_timeout(1000)
+
+                    if not tok_ok:
+                        return False
+
+                    # Export token_state.json
+                    token_state = await page.evaluate(
+                        """() => {
+                            const keys = ['access_token', 'refresh_token', 'id_token',
+                                'access_token_stored_at', 'expires_at',
+                                'id_token_expires_at', 'session_state'];
+                            const out = { exported_at: Date.now(), origin: location.origin };
+                            for (const key of keys) {
+                                const val = sessionStorage.getItem(key);
+                                if (val !== null) out[key] = val;
+                            }
+                            return out;
+                        }"""
+                    )
+                    tpath = self.config.token_state_path
+                    tpath.parent.mkdir(parents=True, exist_ok=True)
+                    tpath.write_text(json.dumps(token_state, indent=2, ensure_ascii=False), encoding="utf-8")
+                    os.chmod(tpath, 0o600)
+
+                    # Export storage_state.json
+                    spath = self.config.storage_state_path
+                    spath.parent.mkdir(parents=True, exist_ok=True)
+                    await context.storage_state(path=str(spath))
+                    os.chmod(spath, 0o600)
+
+                    return True
+                finally:
+                    await browser.close()
+
+        ok = await _do_relogin()
+        if not ok:
+            raise AuthError(
+                "Headless auto-relogin failed. Open https://sria.dfbnet.org in a normal browser, "
+                "log in manually to refresh the session, then try again."
+            )
+        return self.load()
+
     async def refresh(self, refresh_token: str) -> TokenBundle:
         url = f"{self.config.auth_base_url}/protocol/openid-connect/token"
         async with httpx.AsyncClient(timeout=30) as client:
@@ -194,7 +312,11 @@ class TokenManager:
         if bundle.access_token_expired(skew_seconds=45):
             if not bundle.refresh_token:
                 raise AuthError("Access token expired and no refresh_token. Re-run interactive login probe.")
-            bundle = await self.refresh(bundle.refresh_token)
+            try:
+                bundle = await self.refresh(bundle.refresh_token)
+            except AuthError:
+                # Refresh token itself is dead — fall back to headless auto-relogin
+                bundle = await self.auto_relogin()
         if not bundle.access_token:
             raise AuthError("Token refresh did not produce access_token")
         return bundle.access_token
